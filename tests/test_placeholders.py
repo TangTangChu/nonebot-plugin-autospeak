@@ -112,7 +112,7 @@ def test_image_base64():
 
 def test_image_bare_filename(tmp_path):
     images_dir = tmp_path / "images"
-    expected = (images_dir / "a.png").as_posix()
+    expected = f"file:///{(images_dir / 'a.png').resolve().as_posix()}"
     assert (
         ph.render_placeholders("{image:a.png}", NOW, images_dir=images_dir)
         == f"[CQ:image,file={expected}]"
@@ -143,7 +143,7 @@ def test_cq_code_text_passthrough():
 
 def test_image_with_text(tmp_path):
     images_dir = tmp_path / "images"
-    expected = (images_dir / "x.png").as_posix()
+    expected = f"file:///{(images_dir / 'x.png').resolve().as_posix()}"
     assert (
         ph.render_placeholders("早安 {image:x.png}", NOW, images_dir=images_dir)
         == f"早安 [CQ:image,file={expected}]"

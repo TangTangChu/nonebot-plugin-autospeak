@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pytest
 from nonebug import App
 from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
+from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment
 from nonebot.adapters.onebot.v11.event import Sender
 
 SUPERUSER_ID = 10001
@@ -27,8 +27,10 @@ def plugin(tmp_path, monkeypatch):
 
 
 def make_group_event(
-    text: str, user_id: int = SUPERUSER_ID, group_id: int = 12345
+    text: str | Message, user_id: int = SUPERUSER_ID, group_id: int = 12345
 ) -> GroupMessageEvent:
+    raw = text if isinstance(text, str) else str(text)
+    msg = text if isinstance(text, Message) else Message(text)
     return GroupMessageEvent(
         time=int(time.time()),
         self_id=123456,
@@ -38,14 +40,14 @@ def make_group_event(
         group_id=group_id,
         user_id=user_id,
         message_id=1,
-        message=Message(text),
-        raw_message=text,
+        message=msg,
+        raw_message=raw,
         font=0,
         sender=Sender(user_id=user_id, nickname="tester"),
     )
 
 
-async def run_cmd(app: App, plugin, text: str, expected: str):
+async def run_cmd(app: App, plugin, text: str | Message, expected: str):
     """发送一条 autospk 指令并断言回复内容。"""
     cmd = plugin.autospeak_cmd
     async with app.test_matcher(cmd) as ctx:
@@ -174,6 +176,139 @@ async def test_add_invalid_weekdays(app: App, plugin):
         "  - days=mon,tue,fri            => 周一、周二、周五\n"
         "  - days=* / all / everyday     => 每天",
     )
+
+
+# ===== 图文混排 =====
+
+
+def _image_seg(url: str = "https://example.com/a.png") -> MessageSegment:
+    return MessageSegment("image", {"file": "x.png", "url": url})
+
+
+@pytest.fixture()
+def fake_download(monkeypatch):
+    """拦截图片下载，返回固定内容。"""
+    from nonebot_plugin_autospeak import images
+
+    async def _fake(url):
+        return b"img-data", "image/png"
+
+    monkeypatch.setattr(images, "download_image", _fake)
+    return b"img-data"
+
+
+@pytest.mark.asyncio
+async def test_add_with_image(app: App, plugin, fake_download):
+    """add 图文混排：图片自动保存并转为 {image:文件名}。"""
+    from hashlib import md5
+
+    msg = Message(
+        [
+            MessageSegment.text("autospk add group here 09:00 早安"),
+            _image_seg(),
+        ]
+    )
+    await run_cmd(
+        app,
+        plugin,
+        msg,
+        "✅ 已添加定时任务：\n"
+        "  id: 1\n"
+        "  type: group\n"
+        "  target: 12345\n"
+        "  time: 09:00\n"
+        "  weekdays: 每天\n"
+        "  messages: 1 条",
+    )
+    name = md5(fake_download).hexdigest() + ".png"
+    assert plugin.CONFIG["tasks"][0]["messages"] == [f"早安{{image:{name}}}"]
+    assert (plugin.IMAGES_DIR / name).is_file()
+
+
+@pytest.mark.asyncio
+async def test_add_image_middle(app: App, plugin, fake_download):
+    """图片在消息中间时，占位符按原位置拼接。"""
+    from hashlib import md5
+
+    msg = Message(
+        [
+            MessageSegment.text("autospk add group here 09:00 早安"),
+            _image_seg(),
+            MessageSegment.text("！"),
+        ]
+    )
+    await run_cmd(
+        app,
+        plugin,
+        msg,
+        "✅ 已添加定时任务：\n"
+        "  id: 1\n"
+        "  type: group\n"
+        "  target: 12345\n"
+        "  time: 09:00\n"
+        "  weekdays: 每天\n"
+        "  messages: 1 条",
+    )
+    name = md5(fake_download).hexdigest() + ".png"
+    assert plugin.CONFIG["tasks"][0]["messages"] == [f"早安{{image:{name}}}！"]
+
+
+@pytest.mark.asyncio
+async def test_add_once_with_image(app: App, plugin, fake_download):
+    """addonce 图文混排。"""
+    from hashlib import md5
+
+    msg = Message(
+        [
+            MessageSegment.text("autospk addonce private 67890 2099-01-01 09:00 新年"),
+            _image_seg(),
+        ]
+    )
+    await run_cmd(
+        app,
+        plugin,
+        msg,
+        "✅ 已添加一次性任务：\n"
+        "  id: 1\n"
+        "  type: private\n"
+        "  target: 67890\n"
+        "  fire at: 2099-01-01 09:00\n"
+        "  messages: 1 条\n"
+        "（仅触发一次，到点后自动删除）",
+    )
+    name = md5(fake_download).hexdigest() + ".png"
+    assert plugin.CONFIG["tasks"][0]["messages"] == [f"新年{{image:{name}}}"]
+
+
+@pytest.mark.asyncio
+async def test_edit_msg_with_image(app: App, plugin, fake_download):
+    """edit msg 图文混排。"""
+    from hashlib import md5
+
+    plugin.CONFIG["tasks"] = [
+        {
+            "id": 1,
+            "type": "group",
+            "target_id": 12345,
+            "time": "09:00",
+            "weekdays": [],
+            "messages": ["a"],
+        }
+    ]
+    msg = Message(
+        [
+            MessageSegment.text("autospk edit msg 1 新内容"),
+            _image_seg(),
+        ]
+    )
+    await run_cmd(
+        app,
+        plugin,
+        msg,
+        "✅ 任务消息已修改：\n" "  id: 1\n" "  messages: 1 条",
+    )
+    name = md5(fake_download).hexdigest() + ".png"
+    assert plugin.CONFIG["tasks"][0]["messages"] == [f"新内容{{image:{name}}}"]
 
 
 # ===== addonce =====

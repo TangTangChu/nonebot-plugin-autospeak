@@ -20,6 +20,7 @@ from nonebot_plugin_apscheduler import scheduler
 import nonebot_plugin_localstore as store
 
 from .config import Config
+from .images import save_image_segment
 from .placeholders import render_placeholders
 
 plugin_config = get_plugin_config(Config)
@@ -368,7 +369,7 @@ HELP_TEXT = (
     "  - 默认：循环任务在“每天”的指定时间发送\n"
     "  - 可选：通过 days=... 指定星期几发送（见 add 帮助）\n"
     "  - 一次性任务在指定时刻仅触发一次，触发后自动删除\n"
-    "  - 消息内容支持预设占位符，含 {image:...} 发送图片，见 autospk placeholders\n"
+    "  - 消息内容支持预设占位符，配置时可直接发送图片，见 autospk placeholders\n"
     "提示：只有 SUPERUSER 可以使用本插件指令。"
 )
 
@@ -385,7 +386,7 @@ PLACEHOLDERS_HELP = (
     "  - 日期支持 YYYY-MM-DD，或 YYYY-MM-DD HH:MM[:SS]（精确到秒）\n"
     "  - 日期时间格式为 strftime：%Y 年 %m 月 %d 日 %H 时 %M 分 %S 秒\n"
     "  - 图片支持 http(s):// 链接、base64:// 数据和绝对路径\n"
-    "  - 图片用裸文件名时指向 data/autospeak/images/ 目录\n"
+    "  - 裸文件名指向插件图片目录；配置任务时直接发图可自动保存\n"
     "  - CQ 码可直接写在消息里原样透传\n\n"
     "示例：\n"
     "  距离高考还有 {days_until_cn:2026-06-07}\n"
@@ -400,6 +401,32 @@ autospeak_cmd = on_command(
     priority=plugin_config.autospeak_command_priority,
     block=True,
 )
+
+
+def args_text_prefix(plain: str, n: int) -> str:
+    """取 plain 中前 n 个 token 的原文。"""
+    m = re.match(rf"^\s*\S+(?:\s+\S+){{{n - 1}}}", plain)
+    return m.group(0) if m else plain
+
+
+async def rebuild_content_from_message(msg: Message, args_text: str) -> str:
+    """按消息段重建内容文本：先消耗参数前缀，图片段保存并转 {image:文件名}。"""
+    parts_out = []
+    rest = args_text
+    for seg in msg:
+        if seg.type == "text":
+            t = str(seg.data.get("text", ""))
+            if rest:
+                n = min(len(rest), len(t))
+                t = t[n:]
+                rest = rest[n:]
+            if t:
+                parts_out.append(t)
+        elif seg.type == "image":
+            name = await save_image_segment(seg, IMAGES_DIR)
+            if name:
+                parts_out.append(f"{{image:{name}}}")
+    return "".join(parts_out)
 
 
 @autospeak_cmd.handle()
@@ -495,11 +522,13 @@ async def _(event: Event, state: T_State, arg: Message = CommandArg()):
         time_str = parts[3]
 
         days_spec = None
+        tail = None
         if len(parts) >= 6 and parts[-1].lower().startswith("days="):
             days_spec = parts[-1][5:]
-            raw_msgs = " ".join(parts[4:-1])
-        else:
-            raw_msgs = " ".join(parts[4:])
+            tail = parts[-1]
+        raw_msgs = await rebuild_content_from_message(arg, args_text_prefix(text, 4))
+        if tail:
+            raw_msgs = re.sub(r"\s+" + re.escape(tail) + r"$", "", raw_msgs)
 
         try:
             datetime.strptime(time_str, "%H:%M")
@@ -590,7 +619,7 @@ async def _(event: Event, state: T_State, arg: Message = CommandArg()):
         raw_target = parts[2]
         date_str = parts[3]
         time_str = parts[4]
-        raw_msgs = " ".join(parts[5:])
+        raw_msgs = await rebuild_content_from_message(arg, args_text_prefix(text, 5))
 
         if ttype not in ("group", "private"):
             await autospeak_cmd.finish("第一个参数必须是 group 或 private。")
@@ -756,7 +785,9 @@ async def _(event: Event, state: T_State, arg: Message = CommandArg()):
                     "用法：autospk edit msg <id> <msg1>|<msg2>|..."
                 )
 
-            raw_msgs = " ".join(parts[3:])
+            raw_msgs = await rebuild_content_from_message(
+                arg, args_text_prefix(text, 3)
+            )
             messages = [m.strip() for m in raw_msgs.split("|") if m.strip()]
             if not messages:
                 await autospeak_cmd.finish("至少需要一条非空的消息内容。")

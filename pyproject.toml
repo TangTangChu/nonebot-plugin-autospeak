@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nonebot-plugin-autospeak"
-version = "0.1.1"
+version = "0.1.2"
 description = "NoneBot2 定时自动发言插件：群聊/私聊、JSON 配置、多条随机消息、按星期发送、预设占位符"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,7 @@ dependencies = [
     "nonebot-adapter-onebot>=2.2.0",
     "nonebot-plugin-apscheduler>=0.4.0",
     "nonebot-plugin-localstore>=0.6.0",
+    "httpx>=0.24",
 ]
 
 [project.urls]

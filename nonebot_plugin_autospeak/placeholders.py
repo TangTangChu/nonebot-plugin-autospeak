@@ -80,7 +80,8 @@ def _resolve_image_file(arg: str, images_dir: Path | None) -> str:
         return arg
     if images_dir is None:
         return arg
-    return (Path(images_dir) / arg).resolve().as_posix()
+    path = (Path(images_dir) / arg).resolve().as_posix()
+    return f"file:///{path}"
 
 
 def render_placeholders(
