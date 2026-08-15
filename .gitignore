@@ -1,0 +1,25 @@
+# Python 字节码与缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# pytest
+.pytest_cache/
+
+# 插件运行时数据，自动生成（localstore use_cwd 模式）
+data/
+config/
+
+# 虚拟环境
+.venv/
+venv/
+.env
+
+# 构建产物
+build/
+dist/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
